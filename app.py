@@ -5,9 +5,12 @@ import docx2txt
 import matplotlib.pyplot as plt
 import base64
 from io import BytesIO
+import re
+import threading
 
 app = Flask(__name__)
 DOCUMENTS_FOLDER = "documents"
+text_cache = {}
 
 def extract_text_from_pdf(pdf_path):
     text = ""
@@ -19,24 +22,35 @@ def extract_text_from_pdf(pdf_path):
 def extract_text_from_docx(docx_path):
     return docx2txt.process(docx_path)
 
-def search_term_in_documents(term):
-    results = {}
-    term_lower = term.lower()
+def load_documents():
+    global text_cache
+    text_cache = {}
     for filename in os.listdir(DOCUMENTS_FOLDER):
         file_path = os.path.join(DOCUMENTS_FOLDER, filename)
         if filename.endswith(".pdf"):
-            text = extract_text_from_pdf(file_path)
+            text_cache[filename] = extract_text_from_pdf(file_path)
         elif filename.endswith(".docx"):
-            text = extract_text_from_docx(file_path)
-        else:
-            continue
-        
-        words = text.split()
-        occurrences = sum(1 for word in words if word.lower() == term_lower)
-        snippets = [text[max(0, i - 250): i + 250] for i in range(len(text)) if text[i:i+len(term)].lower() == term_lower]
-        
+            text_cache[filename] = extract_text_from_docx(file_path)
+
+def search_term_in_documents(term):
+    results = {}
+    term_pattern = re.compile(rf'\b{re.escape(term)}\b', re.IGNORECASE)
+    
+    def search_in_text(filename, text):
+        occurrences = len(term_pattern.findall(text))
+        snippets = [text[max(0, m.start() - 250): m.end() + 250] for m in term_pattern.finditer(text)]
         if occurrences > 0:
             results[filename] = {"count": occurrences, "snippets": snippets}
+    
+    threads = []
+    for filename, text in text_cache.items():
+        thread = threading.Thread(target=search_in_text, args=(filename, text))
+        threads.append(thread)
+        thread.start()
+    
+    for thread in threads:
+        thread.join()
+    
     return results
 
 def generate_chart(data):
@@ -75,19 +89,12 @@ def get_snippets():
     if not filename or not term:
         return jsonify({"error": "Dados inválidos"}), 400
     
-    file_path = os.path.join(DOCUMENTS_FOLDER, filename)
-    
-    if filename.endswith(".pdf"):
-        text = extract_text_from_pdf(file_path)
-    elif filename.endswith(".docx"):
-        text = extract_text_from_docx(file_path)
-    else:
-        return jsonify({"error": "Formato não suportado"}), 400
-    
-    snippets = [text[max(0, i - 250): i + 250] for i in range(len(text)) if text[i:i+len(term)].lower() == term.lower()]
+    text = text_cache.get(filename, "")
+    term_pattern = re.compile(rf'\b{re.escape(term)}\b', re.IGNORECASE)
+    snippets = [text[max(0, m.start() - 250): m.end() + 250] for m in term_pattern.finditer(text)]
     
     return jsonify({"snippets": snippets})
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    load_documents()
+    app.run(debug=True)
