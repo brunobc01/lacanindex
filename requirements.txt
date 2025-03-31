@@ -2,3 +2,4 @@ Flask
 PyMuPDF
 python-docx
 matplotlib
+docx2txt
