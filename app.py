@@ -25,20 +25,7 @@ def extract_text_from_docx(docx_path):
 def load_documents():
     global text_cache
     text_cache = {}
-    
-    filenames = os.listdir(DOCUMENTS_FOLDER)
-
-    # Separar o arquivo "Escritos" dos demais
-    escritos_file = [f for f in filenames if f.lower().startswith("escritos")]
-    other_files = [f for f in filenames if not f.lower().startswith("escritos")]
-
-    # Ordenar os demais arquivos numericamente (S1, S2, ..., S27)
-    sorted_files = sorted(other_files, key=lambda x: int(re.search(r'\d+', x).group()))
-
-    # Adicionar "Escritos" no final
-    filenames = sorted_files + escritos_file  
-
-    for filename in filenames:
+    for filename in sorted(os.listdir(DOCUMENTS_FOLDER), key=lambda x: (x != "Escritos", int(x[1:]) if x[1:].isdigit() else float('inf'))):
         file_path = os.path.join(DOCUMENTS_FOLDER, filename)
         if filename.endswith(".pdf"):
             text_cache[filename] = extract_text_from_pdf(file_path)
@@ -110,4 +97,5 @@ def get_snippets():
 
 if __name__ == "__main__":
     load_documents()
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
