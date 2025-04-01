@@ -1,101 +1,82 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request
 import os
 import fitz  # PyMuPDF para PDFs
 import docx2txt
 import matplotlib.pyplot as plt
+import io
 import base64
-from io import BytesIO
-import re
-import threading
 
 app = Flask(__name__)
+
+# Pasta onde os arquivos estão armazenados
 DOCUMENTS_FOLDER = "documents"
-text_cache = {}
 
-def extract_text_from_pdf(pdf_path):
-    text = ""
-    with fitz.open(pdf_path) as doc:
-        for page in doc:
-            text += page.get_text()
-    return text
+def extrair_texto_pdf(caminho_arquivo):
+    """Extrai texto de um arquivo PDF e libera memória após leitura."""
+    texto = ""
+    with fitz.open(caminho_arquivo) as doc:
+        for pagina in doc:
+            texto += pagina.get_text()
+    return texto  # Arquivo fechado automaticamente
 
-def extract_text_from_docx(docx_path):
-    return docx2txt.process(docx_path)
+def extrair_texto_docx(caminho_arquivo):
+    """Extrai texto de um arquivo DOCX e libera memória."""
+    texto = docx2txt.process(caminho_arquivo)
+    del texto  # Remove da memória após uso
+    return texto
 
-def load_documents():
-    global text_cache
-    text_cache = {}
-    for filename in sorted(os.listdir(DOCUMENTS_FOLDER), key=lambda x: (x != "Escritos", int(x[1:]) if x[1:].isdigit() else float('inf'))):
-        file_path = os.path.join(DOCUMENTS_FOLDER, filename)
-        if filename.endswith(".pdf"):
-            text_cache[filename] = extract_text_from_pdf(file_path)
-        elif filename.endswith(".docx"):
-            text_cache[filename] = extract_text_from_docx(file_path)
+def contar_ocorrencias(termo, caminho_arquivo):
+    """Conta quantas vezes um termo aparece no arquivo sem armazenar texto na memória."""
+    if caminho_arquivo.endswith(".pdf"):
+        texto = extrair_texto_pdf(caminho_arquivo)
+    elif caminho_arquivo.endswith(".docx"):
+        texto = extrair_texto_docx(caminho_arquivo)
+    else:
+        return 0
+    
+    ocorrencias = texto.lower().split().count(termo.lower())  # Conta ocorrências
+    del texto  # Remove o texto da memória
+    return ocorrencias
 
-def search_term_in_documents(term):
-    results = {}
-    term_pattern = re.compile(rf'\b{re.escape(term)}\b', re.IGNORECASE)
-    
-    def search_in_text(filename, text):
-        occurrences = len(term_pattern.findall(text))
-        snippets = [text[max(0, m.start() - 250): m.end() + 250] for m in term_pattern.finditer(text)]
-        if occurrences > 0:
-            results[filename] = {"count": occurrences, "snippets": snippets}
-    
-    threads = []
-    for filename, text in text_cache.items():
-        thread = threading.Thread(target=search_in_text, args=(filename, text))
-        threads.append(thread)
-        thread.start()
-    
-    for thread in threads:
-        thread.join()
-    
-    return results
+def gerar_grafico(dados):
+    """Gera gráfico e retorna como imagem base64 (sem salvar no disco)."""
+    fig, ax = plt.subplots(figsize=(6, 4))  # Ajuste do tamanho
+    nomes = list(dados.keys())
+    valores = list(dados.values())
 
-def generate_chart(data):
-    plt.figure(figsize=(6, 4))  # Ajustando tamanho do gráfico
-    filenames = list(data.keys())
-    counts = [data[doc]["count"] for doc in filenames]
-    
-    plt.barh(filenames, counts, color='royalblue')
-    plt.xlabel("Ocorrências")
-    plt.ylabel("Documentos")
-    plt.title("Frequência do termo por documento")
-    
-    for index, value in enumerate(counts):
-        plt.text(value, index, str(value), va='center')
-    
-    plt.tight_layout()
-    
-    img = BytesIO()
-    plt.savefig(img, format='png')
-    img.seek(0)
-    return base64.b64encode(img.getvalue()).decode()
+    ax.barh(nomes, valores, color="blue")
+    ax.set_xlabel("Quantidade")
+    ax.set_title("Frequência do termo por documento")
+
+    # Criar imagem sem salvar no disco
+    buffer = io.BytesIO()
+    plt.savefig(buffer, format="png", bbox_inches="tight")
+    buffer.seek(0)
+    grafico_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    plt.close(fig)  # Libera memória
+
+    return grafico_base64
 
 @app.route("/", methods=["GET", "POST"])
 def index():
-    term = request.form.get("term", "")
-    results = search_term_in_documents(term) if term else {}
-    chart_data = generate_chart(results) if results else None
-    return render_template("index.html", term=term, results=results, chart_data=chart_data)
+    resultados = {}
+    grafico_base64 = None
+    termo_busca = ""
 
-@app.route("/snippets", methods=["POST"])
-def get_snippets():
-    data = request.json
-    filename = data.get("filename")
-    term = data.get("term")
-    
-    if not filename or not term:
-        return jsonify({"error": "Dados inválidos"}), 400
-    
-    text = text_cache.get(filename, "")
-    term_pattern = re.compile(rf'\b{re.escape(term)}\b', re.IGNORECASE)
-    snippets = [text[max(0, m.start() - 250): m.end() + 250] for m in term_pattern.finditer(text)]
-    
-    return jsonify({"snippets": snippets})
+    if request.method == "POST":
+        termo_busca = request.form.get("termo", "").strip()
+        if termo_busca:
+            for arquivo in os.listdir(DOCUMENTS_FOLDER):
+                caminho_arquivo = os.path.join(DOCUMENTS_FOLDER, arquivo)
+                if caminho_arquivo.endswith((".pdf", ".docx")):
+                    ocorrencias = contar_ocorrencias(termo_busca, caminho_arquivo)
+                    if ocorrencias > 0:
+                        resultados[arquivo] = ocorrencias
+
+            if resultados:
+                grafico_base64 = gerar_grafico(resultados)
+
+    return render_template("index.html", resultados=resultados, grafico_base64=grafico_base64, termo=termo_busca)
 
 if __name__ == "__main__":
-    load_documents()
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(debug=True)
