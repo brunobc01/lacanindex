@@ -1,6 +1,6 @@
 import os
 import re
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, jsonify
 import fitz  # PyMuPDF para PDFs
 import docx2txt
 import matplotlib.pyplot as plt
@@ -42,6 +42,26 @@ def contar_ocorrencias(termo):
     contagem = {arquivo: len(re.findall(termo_regex, texto)) for arquivo, texto in documentos_texto.items()}
     return {k: v for k, v in contagem.items() if v > 0}  
 
+def extrair_trechos(termo):
+    """Extrai trechos contendo o termo."""
+    termo_regex = r"\b" + re.escape(termo.lower()) + r"\b"  
+    trechos_resultado = {}
+
+    for arquivo, texto in documentos_texto.items():
+        matches = list(re.finditer(termo_regex, texto))
+        trechos = []
+
+        for match in matches:
+            inicio = max(0, match.start() - 250)
+            fim = min(len(texto), match.end() + 250)
+            trecho = texto[inicio:fim]
+            trechos.append(trecho.strip())
+
+        if trechos:
+            trechos_resultado[arquivo] = trechos
+
+    return trechos_resultado
+
 def gerar_grafico(dados):
     """Gera gráfico de barras e retorna como imagem base64."""
     fig, ax = plt.subplots(figsize=(6, 4))
@@ -75,6 +95,16 @@ def index():
                 grafico_base64 = gerar_grafico(resultados)
 
     return render_template("index.html", resultados=resultados, grafico_base64=grafico_base64, termo=termo_busca)
+
+@app.route("/trechos", methods=["POST"])
+def obter_trechos():
+    """Retorna trechos do termo encontrado nos documentos."""
+    termo = request.json.get("termo", "").strip()
+    if not termo:
+        return jsonify({"erro": "Nenhum termo informado"}), 400
+
+    trechos_encontrados = extrair_trechos(termo)
+    return jsonify(trechos_encontrados)
 
 if __name__ == "__main__":
     carregar_documentos()  # Carrega os documentos ao iniciar o app
