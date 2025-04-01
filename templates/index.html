@@ -3,64 +3,148 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Buscador de Termos - Bruno Barros</title>
+    <title>Bruno Barros - Buscador de Termos</title>
     <style>
         body {
             font-family: Arial, sans-serif;
-            text-align: center;
             margin: 20px;
+            background-color: #f4f4f9;
+            text-align: center;
         }
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
+        h1 {
+            color: #2c3e50;
         }
-        input, button {
+        form {
+            margin: 20px auto;
+            width: 50%;
+        }
+        input[type="text"] {
+            width: 80%;
             padding: 10px;
-            margin: 5px;
             font-size: 16px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
         }
         button {
-            background-color: #007BFF;
+            padding: 10px 20px;
+            background-color: #3498db;
             color: white;
             border: none;
+            border-radius: 5px;
             cursor: pointer;
+            font-size: 16px;
         }
         button:hover {
-            background-color: #0056b3;
+            background-color: #2980b9;
         }
         .resultados {
             margin-top: 20px;
             text-align: left;
+            display: inline-block;
+            width: 70%;
         }
-        img {
+        .grafico-container img {
             max-width: 100%;
             height: auto;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+        .trechos-container {
+            display: none;
+            margin-top: 20px;
+            padding: 15px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .trecho {
+            background: #eef;
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        .ver-trechos-btn {
+            background-color: #2ecc71;
+            color: white;
+            padding: 8px 15px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 5px;
+        }
+        .ver-trechos-btn:hover {
+            background-color: #27ae60;
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Buscador de Termos - Bruno Barros</h1>
-        <form method="POST">
-            <input type="text" name="termo" placeholder="Digite o termo para buscar..." value="{{ termo }}">
-            <button type="submit">Buscar</button>
-        </form>
 
-        {% if resultados %}
-            <h2>Resultados Encontrados:</h2>
-            <div class="resultados">
-                {% for arquivo, quantidade in resultados.items() %}
-                    <p><strong>{{ arquivo }}</strong>: {{ quantidade }} ocorrências</p>
+    <h1>Buscador de Termos - Bruno Barros</h1>
+    
+    <form method="POST">
+        <input type="text" name="termo" placeholder="Digite um termo para buscar..." required>
+        <button type="submit">Buscar</button>
+    </form>
+
+    {% if grafico_base64 %}
+        <div class="grafico-container">
+            <h3>Frequência do Termo por Documento</h3>
+            <img src="data:image/png;base64,{{ grafico_base64 }}" alt="Gráfico de Frequência">
+        </div>
+    {% endif %}
+
+    {% if resultados %}
+        <div class="resultados">
+            <h3>Resultados Encontrados:</h3>
+            <ul>
+                {% for doc, count in resultados.items() %}
+                    <li>
+                        <strong>{{ doc }}</strong>: {{ count }} ocorrências
+                        <button class="ver-trechos-btn" onclick="verTrechos('{{ doc }}', '{{ termo }}')">Ver Trechos</button>
+                        <div id="trechos-{{ doc }}" class="trechos-container"></div>
+                    </li>
                 {% endfor %}
-            </div>
+            </ul>
+        </div>
+    {% endif %}
 
-            {% if grafico_base64 %}
-                <h2>Distribuição dos Termos:</h2>
-                <img src="data:image/png;base64,{{ grafico_base64 }}" alt="Gráfico de frequência">
-            {% endif %}
-        {% elif termo %}
-            <p>Nenhum resultado encontrado para "{{ termo }}".</p>
-        {% endif %}
-    </div>
+    <script>
+        function verTrechos(arquivo, termo) {
+            let trechosDiv = document.getElementById("trechos-" + arquivo);
+
+            if (trechosDiv.innerHTML.trim() !== "") {
+                trechosDiv.style.display = (trechosDiv.style.display === "none") ? "block" : "none";
+                return;
+            }
+
+            fetch("/trechos", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ termo: termo })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data[arquivo]) {
+                    trechosDiv.innerHTML = "";
+                    data[arquivo].forEach(trecho => {
+                        let trechoElement = document.createElement("div");
+                        trechoElement.className = "trecho";
+                        trechoElement.textContent = trecho;
+                        trechosDiv.appendChild(trechoElement);
+                    });
+                    trechosDiv.style.display = "block";
+                } else {
+                    trechosDiv.innerHTML = "<p>Nenhum trecho encontrado.</p>";
+                    trechosDiv.style.display = "block";
+                }
+            })
+            .catch(error => console.error("Erro ao buscar trechos:", error));
+        }
+    </script>
+
 </body>
 </html>
