@@ -1,107 +1,91 @@
 import os
 import re
+import io
 import matplotlib.pyplot as plt
 import PyPDF2
 import docx2txt
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_file
 
 app = Flask(__name__)
+DOCUMENTS_FOLDER = "documents"
 
-documents_folder = "documents"
+# Função para processar os arquivos sob demanda
+def search_term_in_file(file_path, search_term):
+    term_pattern = re.compile(rf'\b{re.escape(search_term)}\b', re.IGNORECASE)
+    occurrences = 0
+    snippets = []
+    
+    if file_path.endswith(".pdf"):
+        with open(file_path, "rb") as f:
+            reader = PyPDF2.PdfReader(f)
+            for page in reader.pages:
+                text = page.extract_text()
+                if text:
+                    for match in term_pattern.finditer(text):
+                        start = max(0, match.start() - 250)
+                        end = min(len(text), match.end() + 250)
+                        snippet = text[start:end].strip()
+                        snippets.append(snippet)
+                        occurrences += 1
+    
+    elif file_path.endswith(".docx"):
+        text = docx2txt.process(file_path)
+        for match in term_pattern.finditer(text):
+            start = max(0, match.start() - 250)
+            end = min(len(text), match.end() + 250)
+            snippet = text[start:end].strip()
+            snippets.append(snippet)
+            occurrences += 1
+    
+    return occurrences, snippets
 
-def extract_text_from_pdf(pdf_path):
-    text = ""
-    with open(pdf_path, "rb") as file:
-        reader = PyPDF2.PdfReader(file)
-        for page in reader.pages:
-            text += page.extract_text() + " "
-    return text
-
-def extract_text_from_docx(docx_path):
-    return docx2txt.process(docx_path)
-
-def search_term_in_text(text, term):
-    pattern = re.compile(r"\b" + re.escape(term) + r"\b", re.IGNORECASE)
-    matches = pattern.finditer(text)
-    return [(match.start(), match.end()) for match in matches]
-
-def get_text_snippet(text, start, end, snippet_size=500):
-    snippet_start = max(0, start - snippet_size // 2)
-    snippet_end = min(len(text), end + snippet_size // 2)
-    return text[snippet_start:snippet_end]
-
-def ordenar_documentos(nome):
-    """Função para ordenar os documentos corretamente"""
-    if nome.lower() == "escritos":
-        return (2, nome)  # Escritos sempre por último
-    else:
-        numeros = [int(s) for s in nome.split() if s.isdigit()]
-        return (1, numeros[0] if numeros else float("inf"))
-
-@app.route("/", methods=["GET", "POST"])
+@app.route("/")
 def index():
-    resultados = {}
-    total_ocorrencias = 0
-    termo = ""
+    return render_template("index.html")
 
-    if request.method == "POST":
-        termo = request.form["termo"].strip()
-        if termo:
-            for filename in os.listdir(documents_folder):
-                file_path = os.path.join(documents_folder, filename)
-                if filename.endswith(".pdf"):
-                    text = extract_text_from_pdf(file_path)
-                elif filename.endswith(".docx"):
-                    text = extract_text_from_docx(file_path)
-                else:
-                    continue
-                
-                matches = search_term_in_text(text, termo)
-                if matches:
-                    total_ocorrencias += len(matches)
-                    snippets = [get_text_snippet(text, start, end) for start, end in matches]
-                    resultados[filename] = {"count": len(matches), "snippets": snippets}
-            
-            # Ordenação dos resultados
-            resultados = dict(sorted(resultados.items(), key=lambda x: ordenar_documentos(x[0])))
-            
-            # Geração do gráfico
-            if resultados:
-                filenames = list(resultados.keys())
-                occurrences = [resultados[doc]["count"] for doc in filenames]
-                plt.figure(figsize=(8, 4))
-                plt.barh(filenames, occurrences, color="darkblue")
-                plt.xlabel("Frequência do termo")
-                plt.ylabel("Documentos")
-                plt.title(f"Ocorrências de '{termo}' nos documentos")
-                for index, value in enumerate(occurrences):
-                    plt.text(value, index, str(value))
-                plt.tight_layout()
-                plt.savefig("static/graph.png")
-                plt.close()
+@app.route("/search", methods=["POST"])
+def search():
+    search_term = request.form["search_term"].strip()
     
-    return render_template("index.html", resultados=resultados, termo=termo, total_ocorrencias=total_ocorrencias)
+    if not search_term:
+        return jsonify({"error": "Digite um termo antes de buscar."})
+    
+    results = []
+    for file_name in sorted(os.listdir(DOCUMENTS_FOLDER), key=lambda x: (x[:2].isdigit(), x)):
+        file_path = os.path.join(DOCUMENTS_FOLDER, file_name)
+        occurrences, snippets = search_term_in_file(file_path, search_term)
+        if occurrences > 0:
+            results.append({"file": file_name, "count": occurrences, "snippets": snippets})
+    
+    if not results:
+        return jsonify({"error": "Nenhuma ocorrência encontrada."})
+    
+    return jsonify(results)
 
-@app.route("/get_snippets", methods=["POST"])
-def get_snippets():
-    data = request.get_json()
-    filename = data.get("filename")
-    termo = data.get("termo")
-
-    if not filename or not termo:
-        return jsonify({"error": "Parâmetros inválidos."})
+@app.route("/generate_graph", methods=["POST"])
+def generate_graph():
+    data = request.json
+    if not data:
+        return jsonify({"error": "Dados inválidos."})
     
-    file_path = os.path.join(documents_folder, filename)
-    if filename.endswith(".pdf"):
-        text = extract_text_from_pdf(file_path)
-    elif filename.endswith(".docx"):
-        text = extract_text_from_docx(file_path)
-    else:
-        return jsonify({"error": "Formato de arquivo não suportado."})
+    labels = [item["file"] for item in data]
+    values = [item["count"] for item in data]
     
-    matches = search_term_in_text(text, termo)
-    snippets = [get_text_snippet(text, start, end) for start, end in matches]
-    return jsonify({"snippets": snippets})
+    plt.figure(figsize=(6, 4))
+    plt.barh(labels, values, color='royalblue')
+    plt.xlabel("Ocorrências")
+    plt.ylabel("Arquivos")
+    plt.title("Frequência do termo por documento")
+    plt.gca().invert_yaxis()
+    plt.xticks(fontsize=8)
+    plt.yticks(fontsize=8)
+    plt.tight_layout()
+    
+    img = io.BytesIO()
+    plt.savefig(img, format='png')
+    plt.close()
+    img.seek(0)
+    return send_file(img, mimetype='image/png')
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000, debug=True)
+    app.run(host='0.0.0.0', port=10000)
