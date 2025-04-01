@@ -1,5 +1,5 @@
-from flask import Flask, render_template, request
 import os
+from flask import Flask, render_template, request
 import fitz  # PyMuPDF para PDFs
 import docx2txt
 import matplotlib.pyplot as plt
@@ -8,7 +8,6 @@ import base64
 
 app = Flask(__name__)
 
-# Pasta onde os arquivos estão armazenados
 DOCUMENTS_FOLDER = "documents"
 
 def extrair_texto_pdf(caminho_arquivo):
@@ -17,13 +16,12 @@ def extrair_texto_pdf(caminho_arquivo):
     with fitz.open(caminho_arquivo) as doc:
         for pagina in doc:
             texto += pagina.get_text()
-    return texto  # Arquivo fechado automaticamente
+    return texto  
 
 def extrair_texto_docx(caminho_arquivo):
     """Extrai texto de um arquivo DOCX e libera memória."""
     texto = docx2txt.process(caminho_arquivo)
-    del texto  # Remove da memória após uso
-    return texto
+    return texto  
 
 def contar_ocorrencias(termo, caminho_arquivo):
     """Conta quantas vezes um termo aparece no arquivo sem armazenar texto na memória."""
@@ -34,13 +32,12 @@ def contar_ocorrencias(termo, caminho_arquivo):
     else:
         return 0
     
-    ocorrencias = texto.lower().split().count(termo.lower())  # Conta ocorrências
-    del texto  # Remove o texto da memória
+    ocorrencias = texto.lower().split().count(termo.lower())  
     return ocorrencias
 
 def gerar_grafico(dados):
     """Gera gráfico e retorna como imagem base64 (sem salvar no disco)."""
-    fig, ax = plt.subplots(figsize=(6, 4))  # Ajuste do tamanho
+    fig, ax = plt.subplots(figsize=(6, 4))  
     nomes = list(dados.keys())
     valores = list(dados.values())
 
@@ -48,12 +45,11 @@ def gerar_grafico(dados):
     ax.set_xlabel("Quantidade")
     ax.set_title("Frequência do termo por documento")
 
-    # Criar imagem sem salvar no disco
     buffer = io.BytesIO()
     plt.savefig(buffer, format="png", bbox_inches="tight")
     buffer.seek(0)
     grafico_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
-    plt.close(fig)  # Libera memória
+    plt.close(fig)  
 
     return grafico_base64
 
@@ -79,4 +75,5 @@ def index():
     return render_template("index.html", resultados=resultados, grafico_base64=grafico_base64, termo=termo_busca)
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))  # Usa a porta do ambiente no Render
+    app.run(host="0.0.0.0", port=port)
